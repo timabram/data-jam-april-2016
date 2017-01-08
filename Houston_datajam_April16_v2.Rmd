@@ -1,0 +1,90 @@
+---
+title: "Houston Data Viz April 2016"
+author: "Tim Abram"
+date: "April 23, 2016"
+output: html_document
+---
+
+#Load / Parse Data:
+In order to interactively visualize the Houston 2015 311 data in Tableau, the raw data is imported into R for processing.
+```{r}
+setwd("./data-jam-april-2016")
+df <-read.delim("311-Public-Data-Extract-2015-tab-mhhi.txt", sep="\t", as.is=T)
+df_wm <-read.delim("311-Public-Data-Extract-2015-swm-tab-mhhi.txt", sep="\t", as.is=T)
+
+df<-rbind(df, df_wm)
+rm(df_wm)
+```
+
+## Response Efficiency
+We also investigated "response efficiency" to 311 requests, defined as the time period between an open (`SR.CREATE.DATE`) and closed (`DATE.CLOSED`) request. This data was then written into a tab-delimited text file that could be imported into Tableau for mapping. 
+```{r}
+str(df)
+require(lubridate)
+df$DATE.CLOSED <-as.Date(df$DATE.CLOSED)
+df$SR.CREATE.DATE<-as.Date(df$SR.CREATE.DATE)
+df$norm_time_diff <-as.numeric(df$DATE.CLOSED - df$SR.CREATE.DATE)
+
+write.table(df, file = "Houston_April_DataJam_Tableau_INPUT.txt", quote=T, row.names=F, sep="\t")
+```
+
+#Normalized Response Time by Department
+After calculating response time to 311 requests, we wanted to see how variable the average response time was for different departments. We used the `SummaryBy` function to find the median response time across all 311 reuqests by department. 
+```{r}
+require(doBy)
+by.dept <-summaryBy(norm_time_diff~DEPARTMENT, data = df, FUN = function(x) median(x, na.rm = T))
+colnames(by.dept)<-c("DEPARTMENT", "NORMALIZED_RESPONSE_TIME")
+require(ggplot2)
+ggplot(by.dept, aes(x = DEPARTMENT, y = NORMALIZED_RESPONSE_TIME))+geom_bar(stat="identity")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+We quickly learned that this approach grossly simplifies the ability to score "department efficiency" by equating all response types. We altered our approach to focus on the top request types (based on count). Since the top request was "Water Leak", we decided to investigate requests that dealt with flooding (`SR.TYPE == "Flooding"`), particularly around the Memorial Day Flood time period. 
+
+## Water Leak 311 Requests Related to Houston Flooding
+```{r}
+request_counts <-as.data.frame(table(df$SR.TYPE))
+request_counts<-request_counts[order(request_counts$Freq, decreasing = T),]
+
+top_20 <-as.character(request_counts[1:20,1])
+df.top_20 <-df[which(df$SR.TYPE %in% top_20),]
+
+water_leaks <-df[which(df$SR.TYPE=="Flooding"),]
+ggplot(water_leaks, aes(x = SR.CREATE.DATE))+geom_bar() + ggtitle("311 'Water Leak' Requests By Date, 2015")
+
+ggplot(df.top_20, aes(x = SR.CREATE.DATE, group = SR.TYPE))+geom_bar(alpha=0.5) + ggtitle("Top 20 311 Request Types by Date, 2015")
+
+```
+
+##Water Leak 311 Request Locations
+```{r}
+common_address <-as.data.frame(table(df$SR.LOCATION))
+```
+After further inspection, it was evident that several request locations showed up much more frequently than others. We found that `r 100*nrow(common_address[which(common_address$Freq>1),])/nrow(common_address)` % of locations submitted more than 1 311 request, 
+`r 100*nrow(common_address[which(common_address$Freq>2),])/nrow(common_address)` % submitted more than 2, and
+`r 100*nrow(common_address[which(common_address$Freq>5),])/nrow(common_address)` % submitted more than 5.
+
+To get more detail about this multiple 311 requests, we determined the top 5 request types for locations that had between 2 and 5, 10 and 50, or more than 50 311 requests in 2015. 
+```{r}
+df.a <-as.character(common_address[which(common_address$Freq > 2 & common_address$Freq <= 5),1])
+df.b <-as.character(common_address[which(common_address$Freq > 10 & common_address$Freq <= 50),1])
+df.c <-as.character(common_address[which(common_address$Freq > 50),1])
+
+common_1 <-df[which(df$SR.LOCATION %in% df.a), "SR.TYPE"]
+common_1.a <-as.data.frame(table(common_1)); common_1.a <-common_1.a[order(common_1.a$Freq),1]; 
+common_1.a<-as.character(common_1.a[1:5])
+
+common_2 <-df[which(df$SR.LOCATION %in% df.b), "SR.TYPE"]
+common_2.a <-as.data.frame(table(common_2)); common_2.a <-common_2.a[order(common_2.a$Freq),1]; 
+common_2.a<-as.character(common_2.a[1:5])
+
+common_3 <-df[which(df$SR.LOCATION %in% df.c), "SR.TYPE"]
+common_3.a <-as.data.frame(table(common_3)); common_3.a <-common_3.a[order(common_3.a$Freq),1]; 
+common_3.a<-as.character(common_3.a[1:5])
+```
+
+The top 5 request types for locations with between 2 and 5 311 requests in 2015 were: `r unique(common_1.a)`.
+
+The top 5 request types for locations with between 10 and 50 311 requests in 2015 were: `r unique(common_2.a)`.
+
+The top 5 request types for locations with more than 50 311 requests in 2015 were: `r unique(common_3.a)`.
